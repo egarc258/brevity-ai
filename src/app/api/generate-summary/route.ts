@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
             const speakers = new Set<string>();
 
             // Extract speakers from the transcript
-            lines.forEach(line => {
+            lines.forEach((line: string) => {
                 const speakerMatch = line.match(/^([^:]+):/);
                 if (speakerMatch && speakerMatch[1]) {
                     speakers.add(speakerMatch[1].trim());
