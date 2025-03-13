@@ -1,99 +1,39 @@
 // app/components/ExportDocumentButton.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { saveAs } from 'file-saver';
 import * as docx from 'docx';
 const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType, BorderStyle } = docx;
 
-interface Transcription {
-    id: string;
-    meeting_id: string;
-    text: string;
-    timestamp: string;
-    speaker: string;
-    [key: string]: any; // For any other properties
-}
-
 interface ExportDocumentButtonProps {
     meetingName: string;
-    transcriptions: any[]; // Array of transcription objects
+    transcript: string;
     summary: string | null;
     actionItems: string[] | null;
-    isGenerating?: boolean;
 }
 
 type ExportFormat = 'pdf' | 'docx';
 
 export default function ExportDocumentButton({
                                                  meetingName,
-                                                 transcriptions,
+                                                 transcript,
                                                  summary,
-                                                 actionItems,
-                                                 isGenerating = false
+                                                 actionItems
                                              }: ExportDocumentButtonProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState<number>(0);
     const [showOptions, setShowOptions] = useState(false);
 
-    // Debug log to check what transcription data is received
-    useEffect(() => {
-        console.log("ExportDocumentButton received transcriptions:", transcriptions?.length);
-        if (transcriptions?.length > 0) {
-            console.log("First transcription item:", transcriptions[0]);
-        }
-    }, [transcriptions]);
-
-    // Process transcriptions into a text format
-    const processTranscriptions = (transcriptions: any[]): string => {
-        if (!transcriptions || transcriptions.length === 0) {
-            return "No transcript available.";
-        }
-
-        // Check if this is the specific live transcription format
-        if (transcriptions.length === 1 && typeof transcriptions[0] === 'object') {
-            const item = transcriptions[0];
-            // If it matches the format shown in your example
-            if (item && item.text && item.text.includes("good afternoon this is a test")) {
-                const speakerName = item.speaker || item.name || "Edison Garcia";
-                return `${speakerName}: ${item.text}`;
-            }
-        }
-
-        // Sort by timestamp if available
-        const sortedTranscriptions = [...transcriptions].sort((a, b) => {
-            if (a.timestamp && b.timestamp) {
-                return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-            }
-            return 0;
-        });
-
-        // Format each transcription entry
-        return sortedTranscriptions.map(item => {
-            // Try to get speaker name from various properties
-            const speaker = item.speaker || item.name || item.user || 'Speaker';
-
-            // Try to get text content from various possible properties
-            let content = '';
-            if (item.text) content = item.text;
-            else if (item.content) content = item.content;
-            else if (item.transcript) content = item.transcript;
-            else if (item.message) content = item.message;
-            else content = '[No content]';
-
-            return `${speaker}: ${content}`;
-        }).join('\n\n');
-    };
-
     // Process summary text (if provided) or use placeholder
     const processedSummary = summary
         ? processSummaryText(summary)
         : "# Meeting Summary\n\n## Overview\n- Meeting conducted successfully\n- Key points were discussed\n\n## Next Steps\n- Review meeting notes\n- Follow up on action items";
 
-    // Get transcript text from transcriptions array
-    const processedTranscript = processTranscriptions(transcriptions);
+    // Process transcript or use placeholder
+    const processedTranscript = transcript || "No transcript available.";
 
     // Helper function to process the summary text for better formatting
     function processSummaryText(text: string): string {
@@ -450,24 +390,46 @@ export default function ExportDocumentButton({
                 })
             );
 
-            // DIRECT APPROACH: Add the transcript directly
-            // This ensures we always have the transcript content regardless of data format
-            transcriptParagraphs.push(
-                new Paragraph({
-                    children: [
-                        new TextRun({
-                            text: "Edison Garcia: ",
-                            bold: true,
-                        }),
-                        new TextRun({
-                            text: "good afternoon this is a test of brevity AIS transcription feature we have a couple of things on today's agenda we have to work on the translation feature we also have to work on a participant a voice identification to identify the voices of the participants and yeah other than that everything seems to be going very well thank you and have a good day",
-                        }),
-                    ],
-                    spacing: {
-                        after: 100
+            // Process transcript lines
+            const transcriptLines = transcriptText.split('\n');
+            for (const line of transcriptLines) {
+                if (line.trim() !== '') {
+                    // Check if this is a speaker line (e.g., "Speaker: text")
+                    const speakerMatch = line.match(/^([^:]+):(.*)/);
+
+                    if (speakerMatch && speakerMatch.length > 2) {
+                        transcriptParagraphs.push(
+                            new Paragraph({
+                                children: [
+                                    new TextRun({
+                                        text: `${speakerMatch[1]}: `,
+                                        bold: true,
+                                    }),
+                                    new TextRun({
+                                        text: speakerMatch[2].trim(),
+                                    }),
+                                ],
+                                spacing: {
+                                    after: 100
+                                }
+                            })
+                        );
+                    } else {
+                        transcriptParagraphs.push(
+                            new Paragraph({
+                                children: [
+                                    new TextRun({
+                                        text: line
+                                    })
+                                ],
+                                spacing: {
+                                    after: 100
+                                }
+                            })
+                        );
                     }
-                })
-            );
+                }
+            }
 
             // Create the document
             const doc = new Document({
@@ -557,14 +519,6 @@ export default function ExportDocumentButton({
         setError(null);
 
         try {
-            // Log the data being used for the export
-            console.log("Exporting document with:", {
-                meetingName,
-                transcriptionsCount: transcriptions?.length || 0,
-                summaryLength: processedSummary.length,
-                format
-            });
-
             setProgress(30);
 
             // Export in the selected format
@@ -583,10 +537,6 @@ export default function ExportDocumentButton({
 
     // Helper function to split text into lines for PDF rendering
     const splitTextToLines = (text: string, maxCharsPerLine: number): string[] => {
-        if (!text || text.trim().length === 0) {
-            return ["No content available."];
-        }
-
         const words = text.split(' ');
         const lines: string[] = [];
         let currentLine = '';
@@ -629,7 +579,7 @@ export default function ExportDocumentButton({
             lines.push(currentLine);
         }
 
-        return lines.length > 0 ? lines : ["No content available."];
+        return lines;
     };
 
     // For the dropdown options
@@ -643,16 +593,14 @@ export default function ExportDocumentButton({
         <div className="relative">
             <button
                 onClick={toggleOptions}
-                disabled={loading || isGenerating}
+                disabled={loading}
                 className={`px-4 py-2 rounded-full text-sm font-medium flex items-center
-                   ${loading || isGenerating
+                   ${loading
                     ? 'bg-[#99bfe8] text-[#f6f1e6] cursor-not-allowed'
                     : 'bg-[#0056b3] text-white hover:bg-[#0056b3] transition-colors'}`}
             >
                 {loading ? (
                     <span>Generating ({progress}%)</span>
-                ) : isGenerating ? (
-                    <span>Preparing data...</span>
                 ) : (
                     <>
                         <span>Export Summary</span>
