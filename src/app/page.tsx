@@ -21,9 +21,9 @@ export default function LandingPage() {
                             <Image
                                 src="/soundwave-icon.svg"
                                 alt="Sound wave"
-                                width={60}
-                                height={60}
-                                className="h-12 w-12 sm:h-16 sm:w-16 md:h-30 md:w-30"
+                                width={90}  // Increased to 90
+                                height={90} // Increased to 90
+                                className="h-16 w-16 sm:h-20 sm:w-20 md:h-32 md:w-32" // Larger sizes
                             />
                         </div>
                         <p className="mt-6 text-lg leading-8 text-[#2c3e50]">
