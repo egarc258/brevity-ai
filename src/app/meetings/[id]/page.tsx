@@ -250,10 +250,10 @@ export default function MeetingPage({ params }: { params: any }) {
                         <h2 className="text-lg font-medium text-gray-800">Meeting Details</h2>
 
                         <ExportDocumentButton
-                            meetingId={meetingId}
                             meetingName={meeting.name}
-                            transcriptions={transcriptions}
-                            isGenerating={isFetchingTranscriptions}
+                            transcript={transcriptions.map(t => t.content || '').join('\n')}
+                            summary={null}
+                            actionItems={null}
                         />
                     </div>
 
@@ -296,7 +296,13 @@ export default function MeetingPage({ params }: { params: any }) {
                     <div className="p-6 h-[600px]">
                         <div className="h-full overflow-hidden rounded-lg">
                             <div className="h-full transcription-wrapper">
-                                <TranscriptionComponent meetingId={meetingId} />
+                                <TranscriptionComponent
+                                    onTranscriptUpdate={(transcript: string) => {
+                                        console.log("Transcript updated:", transcript);
+                                        // Handle transcript updates here if needed
+                                    }}
+                                    isActive={meeting.is_active}
+                                />
                             </div>
                         </div>
                     </div>
@@ -375,3 +381,4 @@ export default function MeetingPage({ params }: { params: any }) {
             `}</style>
         </div>
     );
+}
