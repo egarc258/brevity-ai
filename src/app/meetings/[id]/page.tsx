@@ -10,19 +10,9 @@ import TranscriptionComponent from '../../components/TranscriptionComponent';
 import ExportDocumentButton from '../../components/ExportDocumentButton';
 import { use } from 'react';
 
-// Define a Meeting interface to fix TypeScript errors
-interface Meeting {
-    id: string;
-    name: string;
-    user_id: string;
-    is_active: boolean;
-    created_at: string;
-    [key: string]: any; // For any other properties the meeting object might have
-}
-
 export default function MeetingPage({ params }: { params: any }) {
     const { user, isLoaded } = useUser();
-    const [meeting, setMeeting] = useState<Meeting | null>(null);
+    const [meeting, setMeeting] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [transcriptions, setTranscriptions] = useState<any[]>([]);
@@ -134,7 +124,7 @@ export default function MeetingPage({ params }: { params: any }) {
                 throw error;
             }
 
-            setMeeting((prev: Meeting | null) => prev ? ({ ...prev, is_active: !prev.is_active }) : null);
+            setMeeting(prev => ({ ...prev, is_active: !prev.is_active }));
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
             setError(errorMessage);
@@ -260,10 +250,10 @@ export default function MeetingPage({ params }: { params: any }) {
                         <h2 className="text-lg font-medium text-gray-800">Meeting Details</h2>
 
                         <ExportDocumentButton
+                            meetingId={meetingId}
                             meetingName={meeting.name}
-                            transcript={transcriptions.map(t => t.content || '').join('\n')}
-                            summary={null}
-                            actionItems={null}
+                            transcriptions={transcriptions}
+                            isGenerating={isFetchingTranscriptions}
                         />
                     </div>
 
@@ -306,13 +296,7 @@ export default function MeetingPage({ params }: { params: any }) {
                     <div className="p-6 h-[600px]">
                         <div className="h-full overflow-hidden rounded-lg">
                             <div className="h-full transcription-wrapper">
-                                <TranscriptionComponent
-                                    onTranscriptUpdate={(transcript: string) => {
-                                        console.log("Transcript updated:", transcript);
-                                        // Handle transcript updates here if needed
-                                    }}
-                                    isActive={meeting.is_active}
-                                />
+                                <TranscriptionComponent meetingId={meetingId} />
                             </div>
                         </div>
                     </div>
@@ -391,4 +375,3 @@ export default function MeetingPage({ params }: { params: any }) {
             `}</style>
         </div>
     );
-}
