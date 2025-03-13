@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
             const speakers = new Set<string>();
 
             // Extract speakers from the transcript
-            lines.forEach(line => {
+            lines.forEach((line: string) => {
                 const speakerMatch = line.match(/^([^:]+):/);
                 if (speakerMatch && speakerMatch[1]) {
                     speakers.add(speakerMatch[1].trim());
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
             // Add participants section if we found speakers
             if (speakers.size > 0) {
                 customSummary += "## Participants\n";
-                speakers.forEach(speaker => {
+                speakers.forEach((speaker: string) => {
                     customSummary += `- ${speaker}\n`;
                 });
                 customSummary += "\n";
@@ -131,12 +131,13 @@ export async function POST(req: NextRequest) {
             meetingId,
         });
 
-    } catch (error: any) {
+    } catch (error) {
         console.error('Error generating summary:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to generate summary';
 
         // Return appropriate error response
         return NextResponse.json(
-            { error: error.message || 'Failed to generate summary' },
+            { error: errorMessage },
             { status: 500 }
         );
     }
