@@ -1,6 +1,6 @@
 // app/layout.tsx
 import { ClerkProvider } from '@clerk/nextjs';
-import './basic.css';
+import './basic.css'
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import Navbar from './components/Navbar';
