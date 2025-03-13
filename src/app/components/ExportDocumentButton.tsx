@@ -8,60 +8,35 @@ import * as docx from 'docx';
 const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType, BorderStyle } = docx;
 
 interface ExportDocumentButtonProps {
-    meetingId: string;
     meetingName: string;
-    transcriptions: any[];
-    isGenerating?: boolean;
+    transcript: string;
+    summary: string | null;
+    actionItems: string[] | null;
 }
 
 type ExportFormat = 'pdf' | 'docx';
 
 export default function ExportDocumentButton({
-                                                 meetingId,
                                                  meetingName,
-                                                 transcriptions,
-                                                 isGenerating = false
+                                                 transcript,
+                                                 summary,
+                                                 actionItems
                                              }: ExportDocumentButtonProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState<number>(0);
     const [showOptions, setShowOptions] = useState(false);
 
-    // Function to generate a summary using OpenAI API
-    const generateSummary = async (transcriptionText: string) => {
-        try {
-            // Log the API request
-            console.log('Sending request to generate summary API');
+    // Process summary text (if provided) or use placeholder
+    const processedSummary = summary
+        ? processSummaryText(summary)
+        : "# Meeting Summary\n\n## Overview\n- Meeting conducted successfully\n- Key points were discussed\n\n## Next Steps\n- Review meeting notes\n- Follow up on action items";
 
-            // Use absolute path to ensure consistent routing
-            const response = await fetch('/api/generate-summary', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    meetingId,
-                    text: transcriptionText
-                }),
-            });
-
-            // Log the response status
-            console.log('API response status:', response.status);
-
-            if (!response.ok) {
-                throw new Error(`Error: ${response.status} - ${await response.text()}`);
-            }
-
-            const data = await response.json();
-            return data.summary;
-        } catch (err) {
-            console.error('Error generating summary:', err);
-            throw err;
-        }
-    };
+    // Process transcript or use placeholder
+    const processedTranscript = transcript || "No transcript available.";
 
     // Helper function to process the summary text for better formatting
-    const processSummaryText = (text: string): string => {
+    function processSummaryText(text: string): string {
         // Remove any extra newlines at the beginning of the text
         let processedText = text.trimStart();
 
@@ -74,10 +49,10 @@ export default function ExportDocumentButton({
         processedText = processedText.replace(/([^\n])\n\d+\. /g, '$1\n\n$2 ');
 
         return processedText;
-    };
+    }
 
     // Create and download PDF
-    const createAndDownloadPdf = async (transcriptionText: string, summary: string) => {
+    const createAndDownloadPdf = async (transcriptText: string, summaryText: string) => {
         setProgress(60);
 
         try {
@@ -85,11 +60,10 @@ export default function ExportDocumentButton({
             const pdfDoc = await PDFDocument.create();
             const timesRomanFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
             const timesRomanBoldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-            const timesRomanItalicFont = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
 
             // Add a page to the document
             const page = pdfDoc.addPage([595.28, 841.89]); // A4 size
-            const { width, height } = page.getSize();
+            const { height } = page.getSize();
 
             // Add title with proper styling
             page.drawText('Meeting Summary', {
@@ -126,11 +100,8 @@ export default function ExportDocumentButton({
                 color: rgb(0.3, 0.25, 0.2)
             });
 
-            // Process the summary to ensure proper formatting
-            const processedSummary = processSummaryText(summary);
-
             // Add summary text with proper wrapping and formatting
-            const summaryLines = splitTextToLines(processedSummary, 70);
+            const summaryLines = splitTextToLines(summaryText, 70);
             let yPosition = height - 180;
 
             for (const line of summaryLines) {
@@ -232,7 +203,7 @@ export default function ExportDocumentButton({
             });
 
             // Add full transcript with wrapping
-            const transcriptLines = splitTextToLines(transcriptionText, 80);
+            const transcriptLines = splitTextToLines(transcriptText, 80);
             yPosition = transcriptPageSize.height - 80;
 
             for (const line of transcriptLines) {
@@ -272,15 +243,12 @@ export default function ExportDocumentButton({
     };
 
     // Create and download Word document
-    const createAndDownloadDocx = async (transcriptionText: string, summary: string) => {
+    const createAndDownloadDocx = async (transcriptText: string, summaryText: string) => {
         setProgress(60);
 
         try {
             // Process the summary to better format the markdown
-            const processedSummary = processSummaryText(summary);
-
-            // Split the summary into sections
-            const sections = processedSummary.split(/\n\s*\n/);
+            const sections = summaryText.split(/\n\s*\n/);
 
             // Create DOCX sections and paragraphs
             const docxSections = [];
@@ -293,33 +261,40 @@ export default function ExportDocumentButton({
                         // Main header
                         docxSections.push(
                             new Paragraph({
-                                text: line.substring(2),
                                 heading: HeadingLevel.HEADING_1,
                                 spacing: {
                                     before: 300,
                                     after: 200
                                 },
-                                color: "73604B" // Dark brown color
+                                children: [
+                                    new TextRun({
+                                        text: line.substring(2),
+                                        color: "73604B" // Dark brown color
+                                    })
+                                ]
                             })
                         );
                     } else if (line.startsWith('## ')) {
                         // Subheader
                         docxSections.push(
                             new Paragraph({
-                                text: line.substring(3),
                                 heading: HeadingLevel.HEADING_2,
                                 spacing: {
                                     before: 240,
                                     after: 120
                                 },
-                                color: "8E744B" // Medium brown color
+                                children: [
+                                    new TextRun({
+                                        text: line.substring(3),
+                                        color: "8E744B" // Medium brown color
+                                    })
+                                ]
                             })
                         );
                     } else if (line.startsWith('- ')) {
                         // Bullet point
                         docxSections.push(
                             new Paragraph({
-                                text: line.substring(2),
                                 bullet: {
                                     level: 0
                                 },
@@ -329,7 +304,12 @@ export default function ExportDocumentButton({
                                 },
                                 indent: {
                                     left: 720 // 0.5 inch in twips
-                                }
+                                },
+                                children: [
+                                    new TextRun({
+                                        text: line.substring(2)
+                                    })
+                                ]
                             })
                         );
                     } else if (/^\d+\./.test(line)) {
@@ -359,7 +339,11 @@ export default function ExportDocumentButton({
                         } else {
                             docxSections.push(
                                 new Paragraph({
-                                    text: line,
+                                    children: [
+                                        new TextRun({
+                                            text: line
+                                        })
+                                    ],
                                     spacing: {
                                         before: 60,
                                         after: 60
@@ -371,7 +355,11 @@ export default function ExportDocumentButton({
                         // Regular paragraph
                         docxSections.push(
                             new Paragraph({
-                                text: line,
+                                children: [
+                                    new TextRun({
+                                        text: line
+                                    })
+                                ],
                                 spacing: {
                                     before: 60,
                                     after: 120
@@ -388,18 +376,22 @@ export default function ExportDocumentButton({
             // Add transcript heading
             transcriptParagraphs.push(
                 new Paragraph({
-                    text: "Full Transcript",
                     heading: HeadingLevel.HEADING_1,
                     pageBreakBefore: true,
                     spacing: {
                         after: 200
                     },
-                    color: "73604B" // Dark brown color
+                    children: [
+                        new TextRun({
+                            text: "Full Transcript",
+                            color: "73604B" // Dark brown color
+                        })
+                    ]
                 })
             );
 
             // Process transcript lines
-            const transcriptLines = transcriptionText.split('\n');
+            const transcriptLines = transcriptText.split('\n');
             for (const line of transcriptLines) {
                 if (line.trim() !== '') {
                     // Check if this is a speaker line (e.g., "Speaker: text")
@@ -425,7 +417,11 @@ export default function ExportDocumentButton({
                     } else {
                         transcriptParagraphs.push(
                             new Paragraph({
-                                text: line,
+                                children: [
+                                    new TextRun({
+                                        text: line
+                                    })
+                                ],
                                 spacing: {
                                     after: 100
                                 }
@@ -442,12 +438,16 @@ export default function ExportDocumentButton({
                         properties: {},
                         children: [
                             new Paragraph({
-                                text: "Meeting Summary",
                                 heading: HeadingLevel.TITLE,
                                 spacing: {
                                     after: 300
                                 },
-                                color: "73604B" // Dark brown color
+                                children: [
+                                    new TextRun({
+                                        text: "Meeting Summary",
+                                        color: "73604B" // Dark brown color
+                                    })
+                                ]
                             }),
                             new Paragraph({
                                 children: [
@@ -478,12 +478,16 @@ export default function ExportDocumentButton({
                                 }
                             }),
                             new Paragraph({
-                                text: "Executive Summary",
                                 heading: HeadingLevel.HEADING_1,
                                 spacing: {
                                     after: 200
                                 },
-                                color: "8E744B" // Medium brown color
+                                children: [
+                                    new TextRun({
+                                        text: "Executive Summary",
+                                        color: "8E744B" // Medium brown color
+                                    })
+                                ]
                             }),
                             ...docxSections,
                             ...transcriptParagraphs,
@@ -509,33 +513,19 @@ export default function ExportDocumentButton({
 
     // Main function to handle document export
     const handleExport = async (format: ExportFormat) => {
-        if (transcriptions.length === 0) {
-            setError('No transcriptions available to export');
-            return;
-        }
-
         setShowOptions(false);
         setLoading(true);
         setProgress(10);
         setError(null);
 
         try {
-            // Combine all transcriptions into a single text
-            const transcriptionText = transcriptions
-                .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-                .map(t => `${t.speaker}: ${t.text}`)
-                .join('\n\n');
-
             setProgress(30);
-
-            // Generate AI summary
-            const summary = await generateSummary(transcriptionText);
 
             // Export in the selected format
             if (format === 'pdf') {
-                await createAndDownloadPdf(transcriptionText, summary);
+                await createAndDownloadPdf(processedTranscript, processedSummary);
             } else {
-                await createAndDownloadDocx(transcriptionText, summary);
+                await createAndDownloadDocx(processedTranscript, processedSummary);
             }
         } catch (err) {
             console.error('Error exporting document:', err);
@@ -594,7 +584,7 @@ export default function ExportDocumentButton({
 
     // For the dropdown options
     const toggleOptions = () => {
-        if (!loading && transcriptions.length > 0 && !isGenerating) {
+        if (!loading) {
             setShowOptions(!showOptions);
         }
     };
@@ -603,9 +593,9 @@ export default function ExportDocumentButton({
         <div className="relative">
             <button
                 onClick={toggleOptions}
-                disabled={loading || isGenerating || transcriptions.length === 0}
+                disabled={loading}
                 className={`px-4 py-2 rounded-full text-sm font-medium flex items-center
-                   ${loading || isGenerating || transcriptions.length === 0
+                   ${loading
                     ? 'bg-[#99bfe8] text-[#f6f1e6] cursor-not-allowed'
                     : 'bg-[#0056b3] text-white hover:bg-[#0056b3] transition-colors'}`}
             >
@@ -657,8 +647,6 @@ export default function ExportDocumentButton({
                     {error}
                 </div>
             )}
-
-
         </div>
     );
 }
