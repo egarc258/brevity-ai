@@ -9,18 +9,20 @@ const { Document, Paragraph, TextRun, HeadingLevel, Packer, AlignmentType, Borde
 
 interface ExportDocumentButtonProps {
     meetingName: string;
-    transcript: string;
+    transcriptions: any[]; // Changed from transcript: string to transcriptions: any[]
     summary: string | null;
     actionItems: string[] | null;
+    isGenerating?: boolean; // Added optional isGenerating prop
 }
 
 type ExportFormat = 'pdf' | 'docx';
 
 export default function ExportDocumentButton({
                                                  meetingName,
-                                                 transcript,
+                                                 transcriptions,
                                                  summary,
-                                                 actionItems
+                                                 actionItems,
+                                                 isGenerating = false
                                              }: ExportDocumentButtonProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -32,8 +34,32 @@ export default function ExportDocumentButton({
         ? processSummaryText(summary)
         : "# Meeting Summary\n\n## Overview\n- Meeting conducted successfully\n- Key points were discussed\n\n## Next Steps\n- Review meeting notes\n- Follow up on action items";
 
-    // Process transcript or use placeholder
-    const processedTranscript = transcript || "No transcript available.";
+    // Process transcriptions into a full transcript text
+    // Convert the array of transcription objects into a formatted string
+    const processTranscriptions = (): string => {
+        if (!transcriptions || transcriptions.length === 0) {
+            return "No transcript available.";
+        }
+
+        // Sort transcriptions by timestamp if they have timestamps
+        const sortedTranscriptions = [...transcriptions].sort((a, b) => {
+            const timeA = new Date(a.timestamp).getTime();
+            const timeB = new Date(b.timestamp).getTime();
+            return timeA - timeB;
+        });
+
+        // Format each transcription entry with speaker and text
+        return sortedTranscriptions.map(t => {
+            const speaker = t.speaker || 'Unknown Speaker';
+            const timestamp = t.timestamp ? new Date(t.timestamp).toLocaleString() : '';
+            const text = t.text || '';
+
+            return `${speaker} (${timestamp}):\n${text}\n`;
+        }).join('\n');
+    };
+
+    // Get the processed transcript text
+    const processedTranscript = processTranscriptions();
 
     // Helper function to process the summary text for better formatting
     function processSummaryText(text: string): string {
@@ -394,8 +420,8 @@ export default function ExportDocumentButton({
             const transcriptLines = transcriptText.split('\n');
             for (const line of transcriptLines) {
                 if (line.trim() !== '') {
-                    // Check if this is a speaker line (e.g., "Speaker: text")
-                    const speakerMatch = line.match(/^([^:]+):(.*)/);
+                    // Check if this is a speaker line (e.g., "Speaker: text" or "Speaker (timestamp):")
+                    const speakerMatch = line.match(/^([^:]+):(.*)/) || line.match(/^([^(]+\([^)]+\)):(.*)/) || line.match(/^([^:]+\(.*\)):(.*)/);;
 
                     if (speakerMatch && speakerMatch.length > 2) {
                         transcriptParagraphs.push(
@@ -593,14 +619,16 @@ export default function ExportDocumentButton({
         <div className="relative">
             <button
                 onClick={toggleOptions}
-                disabled={loading}
+                disabled={loading || isGenerating}
                 className={`px-4 py-2 rounded-full text-sm font-medium flex items-center
-                   ${loading
+                   ${(loading || isGenerating)
                     ? 'bg-[#99bfe8] text-[#f6f1e6] cursor-not-allowed'
                     : 'bg-[#0056b3] text-white hover:bg-[#0056b3] transition-colors'}`}
             >
                 {loading ? (
                     <span>Generating ({progress}%)</span>
+                ) : isGenerating ? (
+                    <span>Loading transcriptions...</span>
                 ) : (
                     <>
                         <span>Export Summary</span>

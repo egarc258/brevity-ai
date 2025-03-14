@@ -27,6 +27,7 @@ export default function MeetingPage({ params }: { params: any }) {
     const [error, setError] = useState<string | null>(null);
     const [transcriptions, setTranscriptions] = useState<any[]>([]);
     const [isFetchingTranscriptions, setIsFetchingTranscriptions] = useState(false);
+    const [combinedTranscriptText, setCombinedTranscriptText] = useState<string>('');
     const router = useRouter();
 
     // Unwrap params using React.use() for future compatibility
@@ -79,8 +80,9 @@ export default function MeetingPage({ params }: { params: any }) {
         const fetchAllTranscriptions = async () => {
             setIsFetchingTranscriptions(true);
             try {
+                // Using transcriptions_new table instead of transcriptions
                 const { data, error } = await supabase
-                    .from('transcriptions')
+                    .from('transcriptions_new') // Updated table name
                     .select('*')
                     .eq('meeting_id', meetingId)
                     .order('timestamp', { ascending: true });
@@ -91,6 +93,18 @@ export default function MeetingPage({ params }: { params: any }) {
                 }
 
                 setTranscriptions(data || []);
+
+                // Create combined transcript text for export
+                const transcript = (data || []).map(t => {
+                    const speaker = t.speaker || 'Unknown Speaker';
+                    const timestamp = t.timestamp ? new Date(t.timestamp).toLocaleString() : '';
+                    const text = t.text || '';
+
+                    return `${speaker} (${timestamp}):\n${text}`;
+                }).join('\n\n');
+
+                setCombinedTranscriptText(transcript || 'No transcript available.');
+
             } catch (err) {
                 console.error('Error in fetchAllTranscriptions:', err);
             } finally {
@@ -106,11 +120,26 @@ export default function MeetingPage({ params }: { params: any }) {
             .on('postgres_changes', {
                 event: 'INSERT',
                 schema: 'public',
-                table: 'transcriptions',
+                table: 'transcriptions_new', // Updated table name
                 filter: `meeting_id=eq.${meetingId}`
             }, (payload) => {
                 // Update the transcriptions array when a new item is added
-                setTranscriptions(current => [...current, payload.new]);
+                setTranscriptions(current => {
+                    const updated = [...current, payload.new];
+
+                    // Update combined transcript text
+                    const transcript = updated.map(t => {
+                        const speaker = t.speaker || 'Unknown Speaker';
+                        const timestamp = t.timestamp ? new Date(t.timestamp).toLocaleString() : '';
+                        const text = t.text || '';
+
+                        return `${speaker} (${timestamp}):\n${text}`;
+                    }).join('\n\n');
+
+                    setCombinedTranscriptText(transcript || 'No transcript available.');
+
+                    return updated;
+                });
             })
             .subscribe();
 
@@ -261,6 +290,7 @@ export default function MeetingPage({ params }: { params: any }) {
 
                         <ExportDocumentButton
                             meetingName={meeting.name}
+                            transcript={combinedTranscriptText}
                             transcriptions={transcriptions}
                             summary={null}
                             actionItems={null}
