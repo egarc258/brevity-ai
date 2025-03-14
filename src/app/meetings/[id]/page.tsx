@@ -261,9 +261,10 @@ export default function MeetingPage({ params }: { params: any }) {
 
                         <ExportDocumentButton
                             meetingName={meeting.name}
-                            transcript={transcriptions.map(t => t.content || '').join('\n')}
+                            transcriptions={transcriptions}
                             summary={null}
                             actionItems={null}
+                            isGenerating={isFetchingTranscriptions}
                         />
                     </div>
 
@@ -312,6 +313,7 @@ export default function MeetingPage({ params }: { params: any }) {
                                         // Handle transcript updates here if needed
                                     }}
                                     isActive={meeting.is_active}
+                                    meetingId={meetingId} // Pass the meetingId to the component
                                 />
                             </div>
                         </div>

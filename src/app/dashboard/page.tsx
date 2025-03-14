@@ -5,8 +5,8 @@ import { useState, useEffect } from 'react';
 import { UserButton, useUser } from '@clerk/nextjs';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { supabase, testSupabaseConnection } from './../lib/supabase';
-import type { Meeting } from './../lib/supabase';
+import { supabase, testSupabaseConnection } from '../lib/supabase'; // Fixed path
+import type { Meeting } from '../lib/supabase';
 
 export default function Dashboard() {
     const { user, isLoaded } = useUser();
@@ -47,6 +47,8 @@ export default function Dashboard() {
 
         testConnection();
     }, []);
+
+    // Rest of your component code remains the same
 
     // Fetch meetings
     useEffect(() => {

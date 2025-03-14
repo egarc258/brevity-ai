@@ -1,41 +1,11 @@
 // lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Ensure these environment variables are set in your .env.local file
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Create a single supabase client for browser-side usage
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-    },
-    global: {
-        headers: {
-            // We're not using Supabase Auth, so we need a way to identify the user
-            'x-clerk-user-id': typeof window !== 'undefined' ?
-                localStorage.getItem('clerk-user-id') || '' : '',
-        },
-    },
-});
-
-// Add a debug function to test connection
-export const testSupabaseConnection = async () => {
-    try {
-        // First check if we can connect at all
-        const { data, error } = await supabase.from('meetings').select('count').limit(1);
-
-        if (error) {
-            return { success: false, data: null, error };
-        }
-
-        return { success: true, data, error: null };
-    } catch (err) {
-        return { success: false, error: err };
-    }
-};
-
-// Types for our database tables
+// Ensure proper types for Meeting
 export type Meeting = {
     id: string;
     name: string;
@@ -44,11 +14,31 @@ export type Meeting = {
     is_active: boolean;
 };
 
-export type Transcription = {
-    id: string;
-    meeting_id: string;
-    text: string;
-    timestamp: string;
-    speaker: string;
-    confidence?: number;
+// Create Supabase client
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+    },
+    global: {
+        headers: {
+            'x-clerk-user-id': typeof localStorage !== 'undefined' ? localStorage.getItem('clerk-user-id') || '' : '',
+        },
+    },
+});
+
+// Test Supabase connection
+export const testSupabaseConnection = async () => {
+    try {
+        // A simple query that should work if the connection is valid
+        const { data, error } = await supabase.from('meetings').select('count', { count: 'exact', head: true });
+
+        if (error) {
+            return { success: false, error };
+        }
+
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error };
+    }
 };

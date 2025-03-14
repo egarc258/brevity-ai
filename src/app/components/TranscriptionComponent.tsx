@@ -3,11 +3,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useUser } from '@clerk/nextjs';
+import { useParams } from 'next/navigation';
 import { supabase, Transcription } from './../lib/supabase';
 
 interface TranscriptionComponentProps {
     onTranscriptUpdate: (transcript: string) => void;
     isActive: boolean;
+    meetingId?: string; // Add meetingId as a prop
 }
 
 // Custom type for grouping transcriptions by speaker
@@ -20,8 +22,16 @@ interface GroupedTranscription {
     }[];
 }
 
-export default function TranscriptionComponent({ onTranscriptUpdate, isActive }: TranscriptionComponentProps) {
+export default function TranscriptionComponent({
+                                                   onTranscriptUpdate,
+                                                   isActive,
+                                                   meetingId: propMeetingId // Accept meetingId as a prop
+                                               }: TranscriptionComponentProps) {
     const { user } = useUser();
+    const params = useParams();
+    // Use meetingId from props or fallback to URL params
+    const meetingId = propMeetingId || (params?.id as string);
+
     const [transcriptions, setTranscriptions] = useState<Transcription[]>([]);
     const [recording, setRecording] = useState(false);
     const [recognitionSupported, setRecognitionSupported] = useState(true);
@@ -30,6 +40,12 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
     const [sessionText, setSessionText] = useState<string>('');
     const [isSaving, setIsSaving] = useState(false);
     const [heartbeat, setHeartbeat] = useState(0);
+
+    // Add a state to display the combined text (accumulated + live) for continuous visibility
+    const [displayedText, setDisplayedText] = useState<string>('');
+
+    // Add this flag to prevent duplicate transcriptions
+    const isTranscriptionSaved = useRef(false);
 
     // Use refs to track state across renders and event callbacks
     const recognitionRef = useRef<any>(null);
@@ -54,12 +70,96 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
         return text.charAt(0).toUpperCase() + text.slice(1);
     };
 
+    // Load existing transcriptions when component mounts
+    useEffect(() => {
+        if (!user || !meetingId) return;
+
+        const fetchTranscriptions = async () => {
+            try {
+                // Using transcriptions_new table
+                const { data, error } = await supabase
+                    .from('transcriptions_new')  // Use the new table
+                    .select('*')
+                    .eq('meeting_id', meetingId)
+                    .order('timestamp', { ascending: true });
+
+                if (error) {
+                    console.error('Error fetching transcriptions:', error);
+                    return;
+                }
+
+                if (data && data.length > 0) {
+                    setTranscriptions(data);
+
+                    // Combine all transcriptions for display
+                    const fullText = data.map(t => t.text).join(' ');
+                    setSessionText(fullText);
+                    setDisplayedText(''); // Reset displayed text when loading from DB
+                    onTranscriptUpdate(fullText);
+                }
+            } catch (err) {
+                console.error('Error in fetchTranscriptions:', err);
+            }
+        };
+
+        fetchTranscriptions();
+
+        // Set up real-time listener for new transcriptions
+        const subscription = supabase
+            .channel(`transcription_updates_${meetingId}`)
+            .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'transcriptions_new',  // Changed from 'transcriptions'
+                filter: `meeting_id=eq.${meetingId}`
+            }, (payload) => {
+                // Clear displayed text when new transcription arrives from database
+                // This prevents duplication
+                setDisplayedText('');
+
+                setTranscriptions(current => [...current, payload.new as Transcription]);
+
+                // Update session text with new transcription
+                setSessionText(prev => {
+                    const updatedText = `${prev} ${(payload.new as Transcription).text}`.trim();
+                    onTranscriptUpdate(updatedText);
+                    return updatedText;
+                });
+
+                // Reset the accumulatedText ref to prevent duplication
+                accumulatedText.current = '';
+
+                // Also reset the isTranscriptionSaved flag
+                isTranscriptionSaved.current = false;
+            })
+            .subscribe();
+
+        return () => {
+            subscription.unsubscribe();
+        };
+    }, [meetingId, user, onTranscriptUpdate]);
+
     // Auto-scroll to bottom when new transcriptions arrive or when live transcript changes
     useEffect(() => {
         if (transcriptionEndRef.current) {
             transcriptionEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-    }, [transcriptions, liveTranscript, heartbeat]);
+    }, [transcriptions, displayedText, heartbeat]);
+
+    // Update displayed text whenever accumulated text or live transcript changes
+    useEffect(() => {
+        // Only display the live text if we're currently recording
+        if (recording) {
+            // Combine accumulated text with live transcript for continuous display
+            const combinedText = `${accumulatedText.current} ${liveTranscript}`.trim();
+            if (combinedText) {
+                setDisplayedText(combinedText);
+            }
+        } else if (!recording && !transcriptions.length) {
+            // If not recording and no transcriptions from DB, show the accumulated text
+            setDisplayedText(accumulatedText.current);
+        }
+    }, [liveTranscript, recording, transcriptions.length]);
 
     // Set up heartbeat timer for UI updates and activity monitoring
     useEffect(() => {
@@ -237,7 +337,12 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
 
                 // Update display
                 setSessionText(accumulatedText.current);
+
+                // Clear live transcript since it's now in accumulated text
                 setLiveTranscript('');
+
+                // But make sure to update displayed text with accumulated text
+                setDisplayedText(accumulatedText.current);
 
                 // Update parent component
                 onTranscriptUpdate(accumulatedText.current);
@@ -250,6 +355,9 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
             } else {
                 // For interim results, show in the live display
                 setLiveTranscript(transcript);
+
+                // Also update the combined displayed text
+                setDisplayedText(`${accumulatedText.current} ${transcript}`.trim());
             }
         });
 
@@ -366,7 +474,7 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
     };
 
     // Function to finalize recording
-    const finalizeRecording = () => {
+    const finalizeRecording = async () => {
         console.log("Finalizing recording");
 
         // Prevent multiple finalization calls
@@ -382,20 +490,103 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
             // Add live transcript to accumulated text
             accumulatedText.current = (accumulatedText.current + ' ' + liveTranscript).trim();
             setSessionText(accumulatedText.current);
+            setDisplayedText(accumulatedText.current);
 
             // Update parent component
             onTranscriptUpdate(accumulatedText.current);
         }
 
+        // Get the final text to save
+        const finalText = accumulatedText.current.trim();
+
+        // Only save if we have actual content and a meeting ID AND we haven't already saved this session
+        if (finalText && meetingId && user && !isTranscriptionSaved.current) {
+            setIsSaving(true);
+            // Mark as saved to prevent duplication
+            isTranscriptionSaved.current = true;
+
+            try {
+                // Store the Clerk user ID in localStorage for Supabase headers
+                if (typeof window !== 'undefined' && user.id) {
+                    localStorage.setItem('clerk-user-id', user.id);
+                }
+
+                console.log("Attempting to save transcription with:", {
+                    meeting_id: meetingId,
+                    user_id: user.id,
+                    text_length: finalText.length,
+                    timestamp: new Date().toISOString(),
+                    speaker: user.fullName || 'Unknown'
+                });
+
+                // IMPORTANT: Using transcriptions_new table for testing
+                const { data, error } = await supabase
+                    .from('transcriptions_new')  // Use the new table
+                    .insert({
+                        meeting_id: meetingId,
+                        user_id: user.id,
+                        text: finalText,
+                        timestamp: new Date().toISOString(),
+                        speaker: user.fullName || 'Unknown'
+                    });
+
+                if (error) {
+                    console.error("Error saving transcription:", error);
+
+                    // More detailed error logging
+                    if (error.code) console.error("Error code:", error.code);
+                    if (error.message) console.error("Error message:", error.message);
+                    if (error.details) console.error("Error details:", error.details);
+                    if (error.hint) console.error("Error hint:", error.hint);
+
+                    setStatusMessage(`Error saving: ${error.message || 'Database error'}`);
+
+                    // Reset the flag so we can try again
+                    isTranscriptionSaved.current = false;
+                } else {
+                    console.log("Transcription saved successfully", data);
+                    setStatusMessage('Recording stopped and saved.');
+
+                    // Important: Clear displayed text now so it doesn't duplicate
+                    // when the subscription event adds it
+                    setDisplayedText('');
+
+                    // Since the database insert will trigger a subscription event,
+                    // we don't need to manually add the transcription to the local state
+                }
+            } catch (err) {
+                // Log the full error object for debugging
+                console.error("Exception saving transcription:", err);
+                const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+                setStatusMessage(`Failed to save: ${errorMessage}`);
+
+                // Reset the flag so we can try again
+                isTranscriptionSaved.current = false;
+            } finally {
+                setIsSaving(false);
+            }
+        } else {
+            // Log why we're not saving
+            if (!finalText) console.log("Not saving: No text to save");
+            if (!meetingId) console.log("Not saving: No meeting ID available");
+            if (!user) console.log("Not saving: No user available");
+            if (isTranscriptionSaved.current) console.log("Not saving: Already saved this transcription");
+        }
+
         // Reset state
         setRecording(false);
         setLiveTranscript('');
-        setStatusMessage('Recording stopped.');
+        if (!finalText) {
+            setStatusMessage('Recording stopped. No content to save.');
+        }
         isStoppingRef.current = false;
 
         // Clear resources only after saving
         setTimeout(() => {
-            accumulatedText.current = '';
+            // Only clear accumulated text if the save was successful
+            if (isTranscriptionSaved.current) {
+                accumulatedText.current = '';
+            }
             isFinalizingRef.current = false;
         }, 100);
     };
@@ -417,6 +608,7 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
                 const newText = (accumulatedText.current + ' ' + liveTranscript).trim();
                 accumulatedText.current = newText;
                 setSessionText(newText);
+                setDisplayedText(newText);
                 setLiveTranscript('');
 
                 // Update parent component
@@ -450,6 +642,9 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
             // Starting recording
             console.log("Starting recording...");
 
+            // Reset saved state flag for new recording session
+            isTranscriptionSaved.current = false;
+
             // Request microphone permission
             navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(() => {
@@ -461,6 +656,7 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
                     accumulatedText.current = '';
                     setSessionText('');
                     setLiveTranscript('');
+                    setDisplayedText('');
                     lastActivityRef.current = Date.now();
 
                     // Start recognition
@@ -477,6 +673,33 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
     const timeSinceActivity = Date.now() - lastActivityRef.current;
     const isActiveNow = timeSinceActivity < 3000;
     const cursorAnimation = isActiveNow ? "animate-pulse" : "animate-[pulse_1.5s_ease-in-out_infinite]";
+
+    // Group transcriptions by speaker for display
+    const groupedTranscriptions = transcriptions.reduce((acc: GroupedTranscription[], curr) => {
+        // Check if we already have a group for this speaker
+        const existingGroup = acc.find(group => group.speaker === curr.speaker);
+
+        if (existingGroup) {
+            // Add to existing group
+            existingGroup.segments.push({
+                id: curr.id,
+                text: curr.text,
+                timestamp: curr.timestamp
+            });
+        } else {
+            // Create new group
+            acc.push({
+                speaker: curr.speaker,
+                segments: [{
+                    id: curr.id,
+                    text: curr.text,
+                    timestamp: curr.timestamp
+                }]
+            });
+        }
+
+        return acc;
+    }, []);
 
     // Handle authentication requirement
     if (!user) {
@@ -503,52 +726,53 @@ export default function TranscriptionComponent({ onTranscriptUpdate, isActive }:
             {/* Transcription Display */}
             <div className="flex-1 overflow-y-auto bg-white rounded-lg shadow p-4 mb-4 min-h-[400px]">
                 <div className="space-y-6">
-                    {!liveTranscript && !sessionText ? (
+                    {/* Display saved transcriptions */}
+                    {groupedTranscriptions.length > 0 ? (
+                        groupedTranscriptions.map((group, groupIndex) => (
+                            <div key={`group-${groupIndex}`} className="flex items-start space-x-2">
+                                <div className="flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
+                                    <span className="text-xs font-medium text-indigo-800">{group.speaker.charAt(0)}</span>
+                                </div>
+                                <div className="flex-1">
+                                    <div className="flex items-baseline">
+                                        <span className="text-sm font-medium text-gray-900">{group.speaker}</span>
+                                        <span className="ml-2 text-xs text-gray-500">
+                                            {new Date(group.segments[0].timestamp).toLocaleDateString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </span>
+                                    </div>
+                                    {group.segments.map((segment, segmentIndex) => (
+                                        <p key={`segment-${segmentIndex}`} className="text-gray-700 mt-1">
+                                            {segment.text}
+                                        </p>
+                                    ))}
+                                </div>
+                            </div>
+                        ))
+                    ) : !displayedText ? (
                         <p className="text-gray-500 text-center italic">No transcriptions yet. Start recording to begin.</p>
-                    ) : (
-                        <>
-                            {/* Current Session Text (accumulated final transcripts) */}
-                            {sessionText && (
-                                <div className="flex items-start space-x-2">
-                                    <div className="flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center">
-                                        <span className="text-xs font-medium text-indigo-800">{user?.fullName?.charAt(0) || 'Y'}</span>
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-baseline">
-                                            <span className="text-sm font-medium text-gray-900">
-                                                {user?.fullName || 'You'}
-                                            </span>
-                                            <span className="ml-2 text-xs text-gray-500">{new Date().toLocaleDateString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                        </div>
-                                        <p className="text-gray-700 mt-1">
-                                            {sessionText}
-                                        </p>
-                                    </div>
-                                </div>
-                            )}
+                    ) : null}
 
-                            {/* Live Transcription (including both interim and final results) */}
-                            {(recording || liveTranscript) && (
-                                <div className="flex items-start space-x-2">
-                                    <div className={`flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center ${isActiveNow ? "animate-pulse" : ""}`}>
-                                        <span className="text-xs font-medium text-indigo-800">{user?.fullName?.charAt(0) || 'Y'}</span>
-                                    </div>
-                                    <div className="flex-1">
-                                        <div className="flex items-baseline">
-                                            <span className="text-sm font-medium text-gray-900">
-                                                {user?.fullName || 'You'}
-                                                <span className="ml-2 text-xs font-normal text-indigo-500">(live)</span>
-                                            </span>
-                                            <span className="ml-2 text-xs text-gray-500">{new Date().toLocaleDateString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                        </div>
-                                        <p className="text-gray-700 border-l-2 border-indigo-300 pl-2 mt-1">
-                                            {formatLiveText(liveTranscript) || (recording ? "Listening..." : "")}
-                                            <span className={`ml-1 ${cursorAnimation}`}>|</span>
-                                        </p>
-                                    </div>
+                    {/* Live Transcription (only show if we have live text and are recording,
+                         or if we have displayedText but no saved transcriptions) */}
+                    {(recording || (displayedText && transcriptions.length === 0)) && (
+                        <div className="flex items-start space-x-2">
+                            <div className={`flex-shrink-0 w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center ${isActiveNow ? "animate-pulse" : ""}`}>
+                                <span className="text-xs font-medium text-indigo-800">{user?.fullName?.charAt(0) || 'Y'}</span>
+                            </div>
+                            <div className="flex-1">
+                                <div className="flex items-baseline">
+                                    <span className="text-sm font-medium text-gray-900">
+                                        {user?.fullName || 'You'}
+                                        <span className="ml-2 text-xs font-normal text-indigo-500">{recording ? "(live)" : ""}</span>
+                                    </span>
+                                    <span className="ml-2 text-xs text-gray-500">{new Date().toLocaleDateString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                 </div>
-                            )}
-                        </>
+                                <p className="text-gray-700 border-l-2 border-indigo-300 pl-2 mt-1">
+                                    {displayedText || (recording ? "Listening..." : "")}
+                                    {recording && <span className={`ml-1 ${cursorAnimation}`}>|</span>}
+                                </p>
+                            </div>
+                        </div>
                     )}
                     <div ref={transcriptionEndRef} />
                 </div>
